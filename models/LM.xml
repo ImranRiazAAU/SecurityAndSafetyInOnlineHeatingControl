@@ -1,0 +1,496 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.5//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_5.dtd'>
+<nta>
+	<declaration>// INCLUDING C LIBRARY
+import "./libraries/data_reader" {
+
+    init_weather = int initialize_data(const string&amp; data_path);
+    get_measured_data = double historical_data(double current_time, const string&amp; field_name, int month, int day, int room_number);
+    get_rate_or_fraction = double rate_or_fraction(double current_time, const string&amp; field, int month, int day, int room_number, const string&amp; rate_or_fraction);
+    
+};
+// To get Ti, Th, Te from EM
+import "./libraries/libParam" {
+    int get_global_time();
+    int get_offset();
+    int get_month();
+    int get_day();
+    double get_return_temp(int room_id);
+    double get_forward_temp();
+    double get_consumed_power();
+    double get_room_temp(int room_id);
+    double get_floor_temp(int room_id);
+    double get_envelop_temp(int room_id);
+    void change_dir();
+    
+};
+import "./libraries/store_data" {
+
+    void save_floor_temp(double th, int room_id, const string&amp; model, int global_tim);
+    void save_envelop_temp(double te, int room_id, const string&amp; model, int global_tim);
+  
+};
+
+const int ROOMS=4;
+typedef int[0, ROOMS - 1] id_t;
+typedef int[0, 10] intensity_t;
+typedef int[0, 1] heatpump_mode_t;
+clock Ti[ROOMS];  // Room temperature to be calculated
+clock Te[ROOMS];  // Envelope temperature
+clock Th[ROOMS];  // Radiator heat
+clock solar_radiation[ROOMS];
+clock Toutdoor;
+clock D;
+clock hour_clock=0.0; // tracks hours elapsed
+clock minute_clock=0.0;
+
+const double Tg= 22.0;
+const double hour_c = 60.0;
+const double interval_time = 15.0;
+const int time_offset = get_offset()*60+get_global_time();//offset(); //it should be two offsets....one for model creation and second from EM.....ABCD+EFGH......or just ABCD
+const int room_num=-1;
+const int global_time = -1;
+
+bool is_massflow_on[ROOMS] = {1,1,1,1};
+double massflow[ROOMS]={0.157, 0.1051, 0.0224, 0.0422};
+
+double Tforward= get_forward_temp();
+heatpump_mode_t is_pump_on = 1;
+double consumed_power = get_consumed_power();
+const int month = get_month();
+const int day = get_day();
+double last_temperature;
+double next_temperature;
+
+const string strategy_path= "strategy.json";
+double last_price;
+double electricity_price;
+double solar_rate[ROOMS];
+double solar_fraction[ROOMS];
+double ambient_rate;
+double ambient_fraction;
+
+meta double Te2[ROOMS]={10.0,10.0,10.0,10.0};
+meta double Th2[ROOMS]={20.0,20.0,20.0,20.0};
+
+
+const double Ti_first[ROOMS]= {get_room_temp(0), get_room_temp(1), get_room_temp(2), get_room_temp(3)};
+const double Th_first[ROOMS]= {get_floor_temp(0),get_floor_temp(1),get_floor_temp(2),get_floor_temp(3)};
+const double Te_first[ROOMS]= {get_envelop_temp(0),get_envelop_temp(1),get_envelop_temp(2),get_envelop_temp(3)};
+// Coefficients For Room1 July 17 2020
+// Room1
+
+const double Rie1 = 1.4496e+02;
+const double Pr1 = -5.0531e-03;
+const double Mf1 = 9.2337e-01;
+
+const double Rea10 = 1.9613e+00;
+const double Rea12 = 1.1267e-02;
+const double Rea14 = 4.3759e-01;
+
+const double Ce1 = 1.7705e+00;
+
+const double Rih1 = 4.0480e+01;
+const double Ch1 = 6.2121e+01;
+const double Aw1 = 2.8705e-02;
+
+
+// Room2
+
+const double Rie2 = 1.5015e+01;
+const double Pr2 = -7.1642e-03;
+const double Mf2 = 1.8465e+01;
+
+const double Rea20 = 1.3067e-01;
+const double Rea21 = 2.7191e-01;
+const double Rea23 = 1.6148e-01;
+
+const double Ce2 = 2.6147e+00;
+
+const double Rih2 = 1.0584e+00;
+const double Ch2 = 4.7108e-01;
+const double Aw2 = 1.2673e-11;
+
+// Room3
+
+const double Rie3 = 1.2724e+00;
+const double Pr3 = -2.7314e-02;
+const double Mf3 = 1.2886e+00;
+
+const double Rea30 = 3.7056e+00;
+const double Rea32 = 1.2420e-02;
+const double Rea34 = 2.1240e-02;
+
+const double Ce3 = 4.5318e+01;
+
+const double Rih3 = 2.1849e+01;
+const double Ch3 = 9.8218e+01;
+const double Aw3 = 6.1472e-02;
+
+
+// Room4
+
+const double Rie4 = 1.2689e+00;
+const double Pr4 = -2.6739e-02;
+const double Mf4 = 2.0092e+00;
+
+const double Rea40 = 2.6458e+00;
+const double Rea41 = 1.2554e-02;
+const double Rea43 = 2.1312e+01;
+
+const double Ce4 = 4.2466e+01;
+
+const double Rih4 = 1.4197e+00;
+const double Ch4 = 2.2268e+01;
+const double Aw4 = 2.2409e-03;
+
+
+void set_initial_temps(){
+    int r;
+    for( r : id_t){   
+        Ti[r] = Ti_first[r]; // as it is already in degrees no need to convert again
+        Te[r] = Te_first[r];
+        Th[r] = Th_first[r];
+    }
+}
+
+double get_outdoor_temp(double time){
+      
+    return get_measured_data(time, "ambient_temp", month, day,room_num);
+  
+}
+
+void get_rate(double time){
+    int r;
+    for( r : id_t){ 
+        solar_rate[r] = get_rate_or_fraction(time, "direct_sun", month, day, r, "rate");
+    }
+    ambient_rate = get_rate_or_fraction(time, "ambient_temp", month, day, room_num, "rate");
+}
+void get_fraction(double time){
+    int r;
+    for( r : id_t){ 
+        solar_fraction[r] = get_rate_or_fraction(time, "direct_sun", month, day, r, "fraction");
+    }
+    ambient_fraction = get_rate_or_fraction(time, "ambient_temp", month, day, room_num, "fraction");
+}
+
+void set_intial_solar_radiation(double time){
+    int r;
+    for( r : id_t){   
+        solar_radiation[r]=get_measured_data(time, "direct_sun", month, day,r) + solar_fraction[r];
+    }
+}
+
+double get_electricity_price(double time) { // EUR/kWh - Cost function 
+   
+    return get_measured_data(time, "spot_price", month, day, room_num);
+} 
+void copy_envelop_temps(){
+    int r;
+    for( r : id_t)
+    {   
+        Te2[r]=Te[r];
+    }
+}
+void store_envelop_temps(){
+    int r;
+    for( r : id_t)
+    {   
+        save_envelop_temp(Te2[r], r, "LM", global_time);
+    }
+}
+void copy_floor_temps(){
+    int r;
+    for( r : id_t)
+    {   
+        Th2[r]=Th[r];
+    }
+}
+void store_floor_temps(){
+    int r;
+    for( r : id_t)
+    {   
+        save_floor_temp(Th2[r], r, "LM", global_time);
+    }
+}
+
+// For Historical Data
+void fetch_new_data()
+{
+    get_rate(hour_clock+0.0);
+    electricity_price = get_electricity_price(hour_clock+0.0);
+}
+
+void init_values(){
+    int r;
+    set_initial_temps();
+    electricity_price = get_electricity_price(hour_clock+0.0);
+    get_rate(hour_clock+0.0);
+    get_fraction(hour_clock+0.0);
+    Toutdoor= get_outdoor_temp(hour_clock+0.0)+ ambient_fraction;
+    set_intial_solar_radiation(hour_clock+0.0);
+}
+
+void __ON_CONSTRUCT__(){
+    init_weather("./data/weather_and_electricity.csv");
+}
+
+void __ON_BEGIN__() {
+    change_dir(); // move to correct directory to store the strategy
+}
+void __ON_DESTRUCT__(){
+    store_envelop_temps();
+    store_floor_temps();
+}
+
+</declaration>
+	<template>
+		<name>Room</name>
+		<parameter>const id_t room_id, const double RIE, const double REA, const double REAN1, const double REAN2, const double PR, const double MF,const double CE,  const double RIH, const double CH, const double AW,  double &amp;T_Forward, double &amp;Massflow, double &amp;Ta, clock &amp;Tneighbour1, clock &amp;Tneighbour2</parameter>
+		<declaration>
+
+
+
+
+</declaration>
+		<location id="id0" x="-544" y="-8">
+			<label kind="invariant" x="-552" y="26">Ti[room_id]'==(
+	(RIH/1.0)*(Th[room_id]-Ti[room_id]) + // floor to room
+	(RIE/1.0)*(Te[room_id]-Ti[room_id])  + // envelope to room
+	(AW*solar_radiation[room_id])   // persons and sun
+)/hour_c
+&amp;&amp;
+Th[room_id]'==(
+	(RIH/CH)*(Ti[room_id]-Th[room_id]) + 
+	MF*((T_Forward-Th[room_id])*Massflow*is_massflow_on[room_id])// external heat to room
+)/hour_c
+&amp;&amp;
+Te[room_id]'==(
+	(RIE/CE)*(Ti[room_id]-Te[room_id]) + // Room to envelope
+	(REA)*(Toutdoor-Te[room_id]) + // ambient to env
+	(REAN1)*(Tneighbour1-Te[room_id]) + // 1st neighbouring room to env
+	(REAN2)*(Tneighbour2-Te[room_id])   // 2nd neighbouring room to env
+)/hour_c &amp;&amp;
+hour_clock '== 1.0/hour_c &amp;&amp;
+minute_clock '== 1.0 &amp;&amp;
+solar_radiation[room_id]'==solar_rate[room_id]/hour_c &amp;&amp;
+Toutdoor'==(ambient_rate+random(7.9)-(7.9/2))/hour_c</label>
+		</location>
+		<init ref="id0"/>
+	</template>
+	<template>
+		<name>Fetch_Data</name>
+		<declaration>clock x;
+
+
+
+
+
+
+
+</declaration>
+		<location id="id1" x="0" y="0">
+			<label kind="invariant" x="-10" y="17">x&lt;=hour_c/4</label>
+		</location>
+		<init ref="id1"/>
+		<transition id="id2" controllable="false">
+			<source ref="id1"/>
+			<target ref="id1"/>
+			<label kind="guard" x="-110" y="-170">x&gt;=hour_c/4</label>
+			<label kind="assignment" x="-161" y="-221">fetch_new_data(),
+x=0</label>
+			<nail x="8" y="-178"/>
+			<nail x="-161" y="-178"/>
+		</transition>
+	</template>
+	<template>
+		<name>Optimization</name>
+		<declaration>
+import "./libraries/weights" {
+
+    double get_alpha_beta();
+    double get_gamma();
+    double get_normalization_factor();
+  
+};
+clock x;
+const double alpha = get_alpha_beta();
+const double beta = alpha;
+const double gamma = get_gamma()*get_normalization_factor();
+
+
+</declaration>
+		<location id="id3" x="-34" y="59">
+			<label kind="invariant" x="-44" y="76">D' ==
+alpha * sqrt((sum(id:id_t) pow(fmax(0,(Ti[id]- Tg)),2.0))) +
+beta * sqrt((sum(id:id_t) pow(fmax(0,(Tg - Ti[id])),2))) +
+gamma* electricity_price *consumed_power</label>
+		</location>
+		<init ref="id3"/>
+	</template>
+	<template>
+		<name>Controller</name>
+		<declaration>clock x;
+const double d=4.2; //density
+double m= 0.3267; // mass flow
+double dt; // temperature difference
+double Treturn[ROOMS]={get_return_temp(0), get_return_temp(1), get_return_temp(2), get_return_temp(3)};
+double deltaT;
+double COP_carnot;
+double eta;
+double COP_HP=4.0;
+double heat_produced= 2.5*4;
+
+const double Treturn_alpha[ROOMS]={0.1446, 0.3831, 0.7261, 0.4364}; 
+const double Treturn_beta[ROOMS]={0.1885,0.3956,0.7056,0.3941};
+const double Treturn_intercept[ROOMS] = {2.4541,-2.1977,-4.9669,-3.1835};
+const double Treturn_intercept2 = 0.5; //Treturn_intercept adjustment for better results
+
+const double aphaCop = -0.07185; 
+const double betaCop = -0.02314; 
+const double interceptCop = 4.57996;   // 4.74996 was actual value then adjusted to get close results 4.74996-0.17= 4.57996
+
+
+void room_control()
+{
+    for( r : id_t)
+    {   
+        if(Ti[r] &lt; Tg){
+            is_massflow_on[r] = 1; 
+        }
+        else{   
+            is_massflow_on[r] = 0; 
+        }
+    }
+}
+
+
+void set_massflow(){
+    int r;
+    double num=0.0;
+    double denum=0.0;
+    double temp;
+    double Treturn_total;
+
+    for( r : id_t)
+    {   
+        temp = massflow[r]*is_massflow_on[r];
+        num = num+(Treturn[r]*temp);
+        denum = denum+temp;
+    }
+
+    if(denum != 0.0){
+        dt = heat_produced/(d*(denum));
+        Treturn_total = num/denum;
+    }
+    else{
+        dt = 0.0;
+        Treturn_total = Tforward;
+    }
+ 
+    Tforward = dt+Treturn_total;
+
+    if(forall(r : id_t) (is_massflow_on[r] == 0))
+    {
+        Tforward = dt+Treturn_total;
+        return;
+    }
+ 
+
+    for( r : id_t)
+    {   
+        if(is_massflow_on[r] == 1){
+            Treturn[r] = Tforward-(Treturn_alpha[r]*(Tforward-Th[r])+Treturn_beta[r]*(Th[r]-Ti[r])+Treturn_intercept[r])+Treturn_intercept2;
+        }
+        else{   
+            Treturn[r] = Treturn[r]-(Treturn_alpha[r]*(Treturn[r]-Th[r])+Treturn_beta[r]*(Th[r]-Ti[r])+Treturn_intercept[r]);
+        }
+    }   
+    Tforward = dt+Treturn_total;
+}
+double calculate_cop(){
+    deltaT = Tforward-Toutdoor;
+    if(deltaT != 0.0){
+        COP_carnot = Tforward/deltaT;
+        eta = aphaCop*consumed_power+betaCop*deltaT+interceptCop;
+        COP_HP = eta*COP_carnot;
+    }
+    else
+        COP_HP = 0.0;
+    return COP_HP; 
+}
+
+
+
+</declaration>
+		<location id="id4" x="-331" y="-68">
+			<committed/>
+		</location>
+		<location id="id5" x="-42" y="-68">
+			<name x="-25" y="-102">Wait</name>
+			<label kind="invariant" x="-17" y="-76">x&lt;=interval_time</label>
+		</location>
+		<location id="id6" x="59" y="76">
+			<committed/>
+		</location>
+		<init ref="id6"/>
+		<transition id="id7">
+			<source ref="id6"/>
+			<target ref="id5"/>
+			<label kind="assignment" x="93" y="-42">minute_clock = time_offset,
+hour_clock = time_offset/hour_c,
+init_values(),
+room_control(),
+heat_produced=consumed_power*calculate_cop(),
+set_massflow()</label>
+			<nail x="59" y="-34"/>
+		</transition>
+		<transition id="id8" controllable="false">
+			<source ref="id5"/>
+			<target ref="id4"/>
+			<label kind="guard" x="-229" y="17">x&gt;=interval_time</label>
+			<label kind="assignment" x="-221" y="34">x=0,
+copy_envelop_temps(),
+copy_floor_temps()</label>
+			<nail x="-42" y="8"/>
+			<nail x="-331" y="8"/>
+		</transition>
+		<transition id="id9">
+			<source ref="id4"/>
+			<target ref="id5"/>
+			<label kind="select" x="-323" y="-255">i:intensity_t</label>
+			<label kind="assignment" x="-323" y="-238">room_control(),
+consumed_power=0.625+(0.1875)*i, 
+heat_produced=consumed_power*calculate_cop(),
+set_massflow()</label>
+			<nail x="-331" y="-144"/>
+			<nail x="-42" y="-144"/>
+		</transition>
+		<transition id="id10">
+			<source ref="id4"/>
+			<target ref="id5"/>
+			<label kind="assignment" x="-289" y="-68">room_control(),
+consumed_power=0, 
+heat_produced=0,
+set_massflow()</label>
+		</transition>
+	</template>
+	<system>// Place template instantiations here.
+// List one or more processes to be composed into a system.
+
+Room1 = Room(0, Rie1, Rea10, Rea12, Rea14, Pr1, Mf1, Ce1, Rih1, Ch1, Aw1,Tforward , massflow[0], last_temperature, Ti[1], Ti[3]);
+Room2 = Room(1, Rie2, Rea20, Rea21, Rea23, Pr2, Mf2, Ce2, Rih2, Ch2, Aw2,Tforward , massflow[1], last_temperature, Ti[0], Ti[2]);
+Room3 = Room(2, Rie3, Rea30, Rea32, Rea34, Pr3, Mf3, Ce3, Rih3, Ch3, Aw3,Tforward , massflow[2], last_temperature, Ti[1], Ti[3]);
+Room4 = Room(3, Rie4, Rea40, Rea41, Rea43, Pr4, Mf4, Ce4, Rih4, Ch4, Aw4,Tforward , massflow[3], last_temperature, Ti[0], Ti[2]);
+
+
+system Room1,Room2,Room3,Room4, Fetch_Data, Optimization, Controller;
+    </system>
+	<queries>
+		<query>
+			<formula/>
+			<comment/>
+		</query>
+	</queries>
+</nta>

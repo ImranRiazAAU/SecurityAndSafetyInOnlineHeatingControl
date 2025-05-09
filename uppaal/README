@@ -1,0 +1,103 @@
+README for UPPAAL Stratego 4.1.20-4, November 2016
+Uppsala University and Aalborg University.
+Copyright (c) 1995 - 2016. All right reserved.
+
+November 10, 2016
+
+1. Introduction
+2. Installation
+3. New features in this release
+4. Known issues is this release
+5. License Agreement
+
+1. Introduction
+===============
+
+This is a development snapshot 4.1.20 of UPPAAL Stratego -- a model checker
+which combines the previous technologies and adds explicit strategy support.
+The tool combines:
+* Symbolic analysis (Uppaal zone based exploration),
+* Statistical model-checking (Uppaal SMC),
+* Timed games (Uppaal TIGA)
+* Strategy refinemnent via learning.
+* Strategy evaluation via SMC.
+* Rare event probability estimate via "Reach" and "Rare" queries.
+
+Note that UPPAAL is free for non-profit applications but we want all
+users to fill in a license agreement. This can be done online on the
+web site http://www.uppaal.org/ or by sending in the form attached
+below.
+
+This product includes software developed by the Apache Software
+Foundation (http://www.apache.org/).
+
+2. Installation
+===============
+
+To install, unzip the zip-file uppaal-stratego-4.1.20.zip. This should create
+the directory uppaal-stratego-4.1.20 containing at least the files uppaal,
+uppaal.jar, and the directories lib, bin-Linux, bin-Win32, lib, and demo.
+The bin-directories should all contain the two
+files verifyta(.exe) and server(.exe) plus some additional files,
+depending on the platform. The demo-directory should contain some
+demo files with suffixes .xml and .q.
+
+Note that UPPAAL graphical interface requires Oracle Java Runtime Environment
+(JRE) at least version 6 installed on the host system.
+Java can be downloaded from http://java.oracle.com/ .
+
+To run UPPAAL on Linux systems run the uppaal script.
+To run on Windows systems double click the file uppaal.jar.
+To install launching shortcuts: run AddLinks{.vbs,.sh} script.
+
+3. New features and changes since 4.1.19
+=======================================
+* Integrated TIGA queries
+* Added strategy referencing to the TIGA queries in Verifier
+* Added SMC query evaluation under a given strategy.
+
+4. Known issues is this release
+===============================
+
+1. The symbolic simulator ("Simulator" tab in the GUI) may crash
+   -- this is to be fixed for official release.
+   Please use the concrete simulator ("ConcreteSimulator" tab) instead.
+
+
+5. License Agreement
+====================
+
+Please read the license agreement carefully, fill in the form, and
+send it to 
+
+  Wang Yi
+  Department of Computer Systems
+  Uppsala University
+  Box 325
+  751 05 Uppsala, Sweden
+
+The text of the agreement follows:
+
+We (the licensee) understand that UPPAAL includes the programs:
+uppaal.jar, uppaal, server, socketserver, atg2ugi,
+atg2ta, atg2hs2ta, hs2ta, checkta, simta, verifyta, uppaal, and
+xuppaal and that they are supplied "as is", without expressed or
+implied warranty. We agree on the following:
+
+1. You (the licensers) do not have any obligation to provide any
+   maintenance or consulting help with respect to UPPAAL.
+
+2. You neither have any responsibility for the correctness of systems
+   verified using UPPAAL, nor for the correctness of UPPAAL itself.
+
+3. We will never distribute or modify any part of the UPPAAL code
+   (i.e. the source code and the object code) without a written
+   permission of Wang Yi (Uppsala University) or Kim G Larsen (Aalborg
+   University).
+   
+4. We will only use UPPAAL for non-profit research purposes. This
+   implies that neither UPPAAL nor any part of its code should be used
+   or modified for any commercial software product.
+
+In the event that you should release new versions of UPPAAL to us, we
+agree that they will also fall under all of these terms.

@@ -1,0 +1,811 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.5//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_5.dtd'>
+<nta>
+	<declaration>// INCLUDING C LIBRARY
+import "./libraries/data_reader" {
+
+    init_weather = int initialize_data(const string&amp; data_path);
+    get_measured_data = double historical_data(double current_time, const string&amp; field_name, int month, int day, int room_number);
+  
+};
+import "./libraries/start_em" {
+
+    int get_month();
+    int get_day();
+    int get_hour();
+    int get_simulation_period();
+    int get_intervals();
+    int get_selected_controller();
+    int get_frequency();
+    double get_noise1();
+    double get_noise2();
+    double get_noise3();
+    double get_noise4();
+    int get_strategy_attack();
+    int get_reading_attack();
+  
+};
+import "./libraries/store_data" {
+
+   void save_cost_and_discomfort(double dis_comfort, double cost);
+   void save_floor_temp(double th, int room_id, const string&amp; model, int global_tim);
+   void save_envelop_temp(double te, int room_id, const string&amp; model, int global_tim);
+  
+};
+
+const int ROOMS=4;
+typedef int[0, ROOMS - 1] id_t;
+typedef int[0, 1] heatpump_mode_t;
+clock Ti[ROOMS];  // Room temperature to be calculated
+clock Te[ROOMS];  // Envelope temperature
+clock Th[ROOMS];  // Radiator heat
+clock solar_radiation[ROOMS]; // Solar Radiation
+clock Toutdoor;
+clock D;
+clock discomfort;
+clock electricity_cost;
+clock hour_clock=0.0; // tracks hours elapsed
+clock minute_clock=0.0;
+
+const double Tg= 22.0;
+const double hour_c = 60.0;
+const double interval_time = 15.0; 
+const int intervals = get_intervals();
+const int time_offset = get_hour(); 
+const int room_num = -1;
+
+bool is_massflow_on[ROOMS] = {1,1,1,1};
+double massflow[ROOMS]={0.157, 0.1051, 0.0224, 0.0422}; 
+
+double Tforward= 36.25; //forward temperature of water(308.400-273.15)
+heatpump_mode_t is_pump_on = 1;
+double consumed_power=2.5;
+
+const int month = get_month();
+const int day = get_day();
+const int simulation_days = get_simulation_period();
+double last_temperature;
+double next_temperature;
+
+double next_consumed_power;
+int global_time=0;
+double electricity_price;
+double last_solar[ROOMS];
+double next_solar[ROOMS];
+meta double DISCOMFORT;
+meta double ELECTRICITY_COST;
+meta double Te2[ROOMS]={10.0,10.0,10.0,10.0};
+meta double Th2[ROOMS]={20.0,20.0,20.0,20.0};
+
+const double noise_sensor[ROOMS]= {get_noise1(), get_noise2(), get_noise3(), get_noise4()};
+broadcast chan attack;
+bool attack_occuring = 0;
+int frequency = get_frequency();
+int strategy_attack = get_strategy_attack();
+int reading_attack = get_reading_attack();
+bool comfort_voilated = false; 
+bool operation_voilated = false;
+bool abnormal_op = false;
+bool abnormal_com = false;
+
+// Initial Ti,Th,Te for individual rooms
+const double Ti_first[ROOMS]= {21.9894, 22.2011, 21.9903, 22.0641};
+const double Th_first[ROOMS]= {24.1911, 29.8965, 23.3634, 26.9493};
+const double Te_first[ROOMS]= {4.80195, 12.8081, 19.2466, 15.7512};
+
+// Coefficients For Room1 July 17 2020
+// Room1
+const double Rie1 = 1.4496e+02;
+const double Pr1 = -5.0531e-03;
+const double Mf1 = 9.2337e-01;
+
+const double Rea10 = 1.9613e+00;
+const double Rea12 = 1.1267e-02;
+const double Rea14 = 4.3759e-01;
+
+const double Ce1 = 1.7705e+00;
+
+const double Rih1 = 4.0480e+01;
+const double Ch1 = 6.2121e+01;
+const double Aw1 = 2.8705e-02;
+
+
+// Room2
+
+const double Rie2 = 1.5015e+01;
+const double Pr2 = -7.1642e-03;
+const double Mf2 = 1.8465e+01;
+
+const double Rea20 = 1.3067e-01;
+const double Rea21 = 2.7191e-01;
+const double Rea23 = 1.6148e-01;
+
+const double Ce2 = 2.6147e+00;
+
+const double Rih2 = 1.0584e+00;
+const double Ch2 = 4.7108e-01;
+const double Aw2 = 1.2673e-11;
+
+// Room3
+
+const double Rie3 = 1.2724e+00;
+const double Pr3 = -2.7314e-02;
+const double Mf3 = 1.2886e+00;
+
+const double Rea30 = 3.7056e+00;
+const double Rea32 = 1.2420e-02;
+const double Rea34 = 2.1240e-02;
+
+const double Ce3 = 4.5318e+01;
+
+const double Rih3 = 2.1849e+01;
+const double Ch3 = 9.8218e+01;
+const double Aw3 = 6.1472e-02;
+
+
+// Room4
+
+const double Rie4 = 1.2689e+00;
+const double Pr4 = -2.6739e-02;
+const double Mf4 = 2.0092e+00;
+
+const double Rea40 = 2.6458e+00;
+const double Rea41 = 1.2554e-02;
+const double Rea43 = 2.1312e+01;
+
+const double Ce4 = 4.2466e+01;
+
+const double Rih4 = 1.4197e+00;
+const double Ch4 = 2.2268e+01;
+const double Aw4 = 2.2409e-03;
+
+
+void set_initial_temps(){
+    int r;
+    for( r : id_t)
+    {   
+        Ti[r] = Ti_first[r];
+        Te[r] = Te_first[r];
+        Th[r] = Th_first[r];
+    }
+}
+
+// Historical Data
+double get_outdoor_temp(double time){
+ 
+    return get_measured_data(time, "ambient_temp", month, day,room_num); 
+
+}
+
+void set_intial_solar_radiation(double time){
+    int r;
+    for( r : id_t){  
+        last_solar[r]=get_measured_data(time, "direct_sun", month, day,r);
+        next_solar[r]=get_measured_data(time+1.0, "direct_sun", month, day,r);
+        solar_radiation[r]=last_solar[r];
+        
+    }
+}
+void get_solar_radiation(double time) {  // W/m2 - projection of solar radiation
+    int r;
+    for( r : id_t){ 
+        last_solar[r]=next_solar[r];
+        next_solar[r]=get_measured_data(time, "direct_sun", month, day,r);
+    }
+}
+
+double get_electricity_price(double time) { // EUR/kWh - Cost function 
+
+    return get_measured_data(time, "spot_price", month, day, room_num);
+} 
+// Soring cost and comfort
+void set_cost_and_discomfort(){
+    save_cost_and_discomfort(DISCOMFORT,ELECTRICITY_COST);
+}
+
+void store_envelop_temps(){
+    int r;
+    for( r : id_t)
+    {   
+        save_envelop_temp(Te[r], r, "EM", global_time);
+    }
+}
+void store_floor_temps(){
+    int r;
+    for( r : id_t)
+    {   
+        save_floor_temp(Th[r], r, "EM", global_time);
+    }
+}
+// For Historical Data
+void fetch_new_data()
+{
+    last_temperature = next_temperature;
+    next_temperature = get_outdoor_temp(hour_clock+1.0);
+    electricity_price = get_electricity_price(hour_clock+0.0);
+    get_solar_radiation(hour_clock+1.0);
+}
+
+void init_values(){
+    set_initial_temps();
+    set_intial_solar_radiation(hour_clock+0.0);
+
+    last_temperature = get_outdoor_temp(hour_clock+0.0);
+    next_temperature = get_outdoor_temp(hour_clock+1.0);
+    
+    Toutdoor = last_temperature;
+    electricity_price = get_electricity_price(hour_clock+0.0);
+           
+}
+void check_comfort(){
+    for( r : id_t)
+        {   
+            if(Ti[r] &gt;= (Tg+0.5)){
+                if (is_massflow_on[r] == 1){
+                    operation_voilated = 1; 
+                }
+            }
+            else if (Ti[r] &lt;= (Tg-0.5)){
+                if (is_massflow_on[r] == 0){
+                    operation_voilated = 1; 
+                }
+            }
+            else {operation_voilated = 0; }
+       }
+}
+void check_operation(){
+    for( r : id_t)
+        {   
+            if(Ti[r] &gt;= (Tg+3.0) or Ti[r] &lt;= (Tg-3.0)){
+                comfort_voilated = 1; 
+            }
+            else{
+                comfort_voilated = 0;
+            }
+       }
+}
+
+void __ON_CONSTRUCT__(){
+  init_weather("./data/weather_and_electricity.csv");
+
+}
+
+void __ON_DESTRUCT__(){
+    set_cost_and_discomfort();
+}
+
+
+</declaration>
+	<template>
+		<name>Room</name>
+		<parameter>const id_t room_id, const double RIE, const double REA, const double REAN1, const double REAN2, const double PR, const double MF,const double CE,  const double RIH, const double CH, const double AW,  double &amp;TForward, double &amp;Massflow, clock &amp;Tneighbour1, clock &amp;Tneighbour2</parameter>
+		<declaration>
+
+
+
+
+</declaration>
+		<location id="id0" x="-544" y="-8">
+			<label kind="invariant" x="-552" y="26">Ti[room_id]'==(
+	(RIH/1.0)*(Th[room_id]-Ti[room_id]) + // floor to room
+	(RIE/1.0)*(Te[room_id]-Ti[room_id])  + // envelope to room
+	(AW*solar_radiation[room_id])  // persons and sun
+)/hour_c
+&amp;&amp;
+Th[room_id]'==(
+	(RIH/CH)*(Ti[room_id]-Th[room_id]) + 
+	MF*((TForward-Th[room_id])*Massflow*is_massflow_on[room_id])// external heat to room
+)/hour_c
+&amp;&amp;
+Te[room_id]'==(
+	(RIE/CE)*(Ti[room_id]-Te[room_id]) + // Room to envelope
+	(REA)*(Toutdoor-Te[room_id]) + // room to env
+	(REAN1)*(Tneighbour1-Te[room_id]) + // 1st neighbouring room to env
+	(REAN2)*(Tneighbour2-Te[room_id])   // 2nd neighbouring room to env
+)/hour_c &amp;&amp;
+hour_clock '== 1.0/hour_c &amp;&amp;
+minute_clock '== 1.0 &amp;&amp;
+solar_radiation[room_id]'==(next_solar[room_id]-last_solar[room_id])/hour_c &amp;&amp;
+Toutdoor'==(next_temperature-last_temperature)/hour_c</label>
+		</location>
+		<init ref="id0"/>
+	</template>
+	<template>
+		<name>Fetch_Data</name>
+		<declaration>clock x;</declaration>
+		<location id="id1" x="0" y="0">
+			<label kind="invariant" x="-10" y="17">x&lt;=hour_c</label>
+		</location>
+		<init ref="id1"/>
+		<transition id="id2">
+			<source ref="id1"/>
+			<target ref="id1"/>
+			<label kind="guard" x="-119" y="-187">x&gt;=hour_c</label>
+			<label kind="assignment" x="-127" y="-229">fetch_new_data(),
+x=0</label>
+			<nail x="68" y="-195"/>
+			<nail x="-153" y="-195"/>
+		</transition>
+	</template>
+	<template>
+		<name>Optimization</name>
+		<declaration>import "./libraries/weights" {
+
+    double get_alpha_beta();
+    double get_gamma();
+    double get_normalization_factor();
+  
+};
+
+clock x;
+const double alpha = get_alpha_beta();
+const double beta = get_alpha_beta();
+const double gamma = get_gamma()*get_normalization_factor();
+
+
+</declaration>
+		<location id="id3" x="153" y="0">
+			<label kind="invariant" x="143" y="17">D' ==
+alpha * sqrt((sum(id:id_t) pow(fmax(0,(Ti[id]- Tg)),2.0))) +
+beta * sqrt((sum(id:id_t) pow(fmax(0,(Tg - Ti[id])),2))) +
+gamma* electricity_price *consumed_power &amp;&amp;
+discomfort' ==
+sqrt((sum(id:id_t) pow(fmax(0,(Ti[id]- Tg)),2.0))) +
+sqrt((sum(id:id_t) pow(fmax(0,(Tg - Ti[id])),2))) &amp;&amp;
+electricity_cost' ==
+electricity_price *consumed_power</label>
+		</location>
+		<init ref="id3"/>
+	</template>
+	<template>
+		<name>Controller</name>
+		<declaration>
+import "./libraries/connectUPPAALCTRL" {
+    void compute_strategy(double&amp; room_temps[4], int g_time, int offset, double&amp; envelope_temps[4], double&amp; floor_temps[4], int month, int day, double forward_temp, double&amp; Tr[4], int reuse, double power_consumed);
+};
+import "./libraries/useStrategy" {
+    double get_stratego_control_choice(double&amp; discrete_time[1], double&amp; rooms_and_outdoor_temp[7], int reuse, int interval, int strategy_num, int freq, int read_attack, double&amp; room_noise[4]);
+    double get_bb_control_choice(double&amp; room_temps[4], double target_temp);
+};
+
+clock x;
+const double d=4.2; //density
+double m= 0.3267; // mass flow
+double dt; // temperature difference
+double Treturn_total= 32.0;
+double Treturn[ROOMS]={31.09, 31.07, 27.17, 31.29};
+double deltaT;
+double COP_carnot;
+double eta;
+double COP_HP=4.0;
+double heat_produced= 2.5*4;// consumed_power*COP_HP
+
+// Estimation Coefficients for Treturn
+const double Treturn_alpha[ROOMS]={0.1446, 0.3831, 0.7261, 0.4364}; 
+const double Treturn_beta[ROOMS]={0.1885,0.3956,0.7056,0.3941};
+const double Treturn_intercept[ROOMS] = {2.4541,-2.1977,-4.9669,-3.1835};
+const double Treturn_intercept2 = 0.5; //Treturn_intercept adjustment for better results
+
+// Estimation Coefficients for COP
+const double alphaCop = -0.07185; 
+const double betaCop = -0.02314; 
+const double interceptCop = 4.57996;   // 4.74996 was actual value then adjusted to get close results 4.74996-0.17= 4.57996
+
+int reuse = 1;
+int strategy_num=0;
+
+int decisions[5]={0,0,0,0,0};
+int controller = get_selected_controller(); // 0 for stratego and 1 for bb
+
+void room_control(){
+    double TIs[4];
+    if (reading_attack == 1){
+        if (global_time%(frequency*15) == 0){
+            for( r : id_t)
+            {   
+                TIs[r] = Ti[r]+noise_sensor[r];
+            }
+            for( r : id_t)
+            {   
+                if(TIs[r] &lt; Tg){
+                    is_massflow_on[r] = 1; 
+                }
+                else{   
+                    is_massflow_on[r] = 0; 
+                }
+            }
+        }
+        else{
+            for( r : id_t)
+            {   
+                if(Ti[r] &lt; Tg){
+                    is_massflow_on[r] = 1; 
+                }
+                else{   
+                    is_massflow_on[r] = 0; 
+                }
+            }
+        }
+    }
+    else{
+        for( r : id_t)
+        {   
+            if(Ti[r] &lt; Tg){
+                is_massflow_on[r] = 1; 
+            }
+            else{   
+                is_massflow_on[r] = 0; 
+            }
+        }
+    }
+}
+
+void set_massflow(){
+    int r;
+    double num=0.0;
+    double denum=0.0;
+    double temp;
+
+    for( r : id_t)
+    {   
+        temp = massflow[r]*is_massflow_on[r];
+        num = num+(Treturn[r]*temp);
+        denum = denum+temp;
+    }
+
+    if(denum != 0.0){
+        dt = heat_produced/(d*(denum));
+        Treturn_total = num/denum;
+    }
+    else{
+        dt = 0.0;
+        Treturn_total = Tforward;
+    }
+ 
+    Tforward = dt+Treturn_total;
+
+    if(forall(r : id_t) (is_massflow_on[r] == 0))
+    {
+        Tforward = dt+Treturn_total;
+        return;
+    }
+ 
+
+    for( r : id_t)
+    {   
+        if(is_massflow_on[r] == 1){
+            Treturn[r] = Tforward-(Treturn_alpha[r]*(Tforward-Th[r])+Treturn_beta[r]*(Th[r]-Ti[r])+Treturn_intercept[r])+Treturn_intercept2;
+        }
+        else{   
+            Treturn[r] = Treturn[r]-(Treturn_alpha[r]*(Treturn[r]-Th[r])+Treturn_beta[r]*(Th[r]-Ti[r])+Treturn_intercept[r]);
+        }
+    }   
+    Tforward = dt+Treturn_total;
+}
+double calculate_cop(){
+    deltaT = Tforward-Toutdoor;
+    if(deltaT != 0.0){
+        COP_carnot = Tforward/deltaT;
+        eta = alphaCop*consumed_power+betaCop*deltaT+interceptCop;
+        COP_HP = eta*COP_carnot;
+    }
+    else
+        COP_HP = 0.0;
+    return COP_HP; 
+}
+
+
+// CALLING  TO STRATEGO CONTROLLER
+void call_stratego(){
+        double TIs[4];
+        double TEs[4];
+        double THs[4];
+        double TRs[4];
+
+        for( r : id_t)
+        {   
+            TIs[r] = Ti[r];
+            TEs[r] = Te[r];
+            THs[r] = Th[r];
+            TRs[r] = Treturn[r];
+        }
+        if (attack_occuring==1){
+            for( r : id_t)
+            {   
+                TIs[r] = TIs[r]+noise_sensor[r];
+            }
+        }
+        compute_strategy(TIs,global_time,time_offset, TEs, THs, month, day, Tforward, TRs, reuse, next_consumed_power);
+        
+        if(reuse == 1)
+            strategy_num=strategy_num+1;
+}
+
+
+// STRATEGY LOOKUP
+void get_control_decision(){
+    double temp;
+    double discrete_time[1];
+    double TIs[7];
+    double ATCs[4];
+    TIs[0] = minute_clock;
+    for( r : id_t)
+    {   
+        TIs[r+1] = Ti[r];
+        ATCs[r] = noise_sensor[r];
+    }
+    if (reading_attack == 1){
+        if (global_time%(frequency*15) == 0){
+            for( r : id_t)
+            {   
+                TIs[r+1] = TIs[r+1]+noise_sensor[r];
+             }
+        }
+    }
+    TIs[4+1]=Toutdoor;
+    TIs[5+1]=Tforward;
+    temp = get_stratego_control_choice(discrete_time, TIs, reuse, intervals, strategy_num, frequency, reading_attack, ATCs);
+    if (temp &gt;= 0.0){
+        next_consumed_power= temp;
+    }
+    if(reuse == intervals)
+        reuse = 1;
+    else
+        reuse=reuse+1;
+}
+void control_decision(){
+    if(controller == 0){
+        get_control_decision();
+    }
+}
+void call_bb(){
+    double TIs[4];
+    for( r : id_t)
+        {   
+            TIs[r] = Ti[r];
+        }
+    next_consumed_power = get_bb_control_choice(TIs, Tg);   
+}
+void call_controller(){
+    if (controller == 0){
+        if (global_time ==0){  
+            call_bb();      
+            call_stratego();
+        }
+        else call_stratego();
+    }
+    else call_bb();
+}</declaration>
+		<location id="id4" x="0" y="0">
+			<committed/>
+		</location>
+		<location id="id5" x="442" y="-127">
+			<name x="432" y="-161">wait</name>
+			<label kind="invariant" x="467" y="-136">x&lt;=interval_time</label>
+		</location>
+		<location id="id6" x="-255" y="0">
+			<committed/>
+		</location>
+		<location id="id7" x="0" y="-127">
+			<committed/>
+		</location>
+		<init ref="id6"/>
+		<transition id="id8">
+			<source ref="id7"/>
+			<target ref="id5"/>
+			<label kind="assignment" x="34" y="-229">room_control(),
+call_controller(),
+consumed_power = next_consumed_power,
+heat_produced = consumed_power*calculate_cop(),
+set_massflow()</label>
+		</transition>
+		<transition id="id9">
+			<source ref="id4"/>
+			<target ref="id7"/>
+			<label kind="synchronisation" x="8" y="-68">attack!</label>
+		</transition>
+		<transition id="id10">
+			<source ref="id6"/>
+			<target ref="id4"/>
+			<label kind="assignment" x="-212" y="8">minute_clock = time_offset*60,
+hour_clock=time_offset,
+init_values()</label>
+		</transition>
+		<transition id="id11">
+			<source ref="id5"/>
+			<target ref="id4"/>
+			<label kind="guard" x="42" y="8">x&gt;=interval_time</label>
+			<label kind="assignment" x="42" y="25">x=0,
+global_time=global_time+15,
+DISCOMFORT = discomfort,
+ELECTRICITY_COST= electricity_cost,
+store_envelop_temps(),
+store_floor_temps(),
+control_decision(),
+check_operation(),
+check_comfort()</label>
+			<nail x="442" y="0"/>
+		</transition>
+	</template>
+	<template>
+		<name>Attacker</name>
+		<declaration>
+void update_sensor_values(){
+    if (strategy_attack == 1){
+        if (global_time%(frequency*15) == 0){
+            attack_occuring=1;
+        }
+        else {
+            attack_occuring=0;
+        }
+    }
+    else {
+        attack_occuring=0;
+    }
+}</declaration>
+		<location id="id12" x="-697" y="-178">
+		</location>
+		<init ref="id12"/>
+		<transition id="id13">
+			<source ref="id12"/>
+			<target ref="id12"/>
+			<label kind="synchronisation" x="-586" y="-280">attack?</label>
+			<label kind="assignment" x="-663" y="-255">update_sensor_values()</label>
+			<nail x="-697" y="-255"/>
+			<nail x="-433" y="-255"/>
+			<nail x="-433" y="-178"/>
+		</transition>
+	</template>
+	<template>
+		<name>Safety1</name>
+		<location id="id14" x="-756" y="-229">
+			<name x="-773" y="-204">Safe</name>
+			<label kind="exponentialrate" x="-765" y="-272">1</label>
+		</location>
+		<location id="id15" x="-535" y="-229">
+			<name x="-646" y="-212">UnsafeOperation</name>
+			<label kind="exponentialrate" x="-535" y="-263">1</label>
+		</location>
+		<init ref="id14"/>
+		<transition id="id16">
+			<source ref="id15"/>
+			<target ref="id14"/>
+			<label kind="guard" x="-722" y="-161">operation_voilated==0</label>
+			<label kind="assignment" x="-705" y="-136">abnormal_op = 0</label>
+			<nail x="-450" y="-136"/>
+			<nail x="-833" y="-136"/>
+		</transition>
+		<transition id="id17">
+			<source ref="id14"/>
+			<target ref="id15"/>
+			<label kind="guard" x="-739" y="-255">operation_voilated==1</label>
+			<label kind="assignment" x="-722" y="-229">abnormal_op = 1</label>
+			<nail x="-578" y="-229"/>
+		</transition>
+	</template>
+	<template>
+		<name>Safety2</name>
+		<location id="id18" x="-535" y="-110">
+			<name x="-545" y="-144">Safe</name>
+			<label kind="exponentialrate" x="-545" y="-76">1</label>
+		</location>
+		<location id="id19" x="-314" y="-110">
+			<name x="-408" y="-93">UnsafeComfort</name>
+			<label kind="exponentialrate" x="-324" y="-76">1</label>
+		</location>
+		<init ref="id18"/>
+		<transition id="id20">
+			<source ref="id19"/>
+			<target ref="id18"/>
+			<label kind="guard" x="-510" y="-51">comfort_voilated == 0</label>
+			<label kind="assignment" x="-493" y="-17">abnormal_com = 0</label>
+			<nail x="-246" y="-25"/>
+			<nail x="-603" y="-25"/>
+		</transition>
+		<transition id="id21">
+			<source ref="id18"/>
+			<target ref="id19"/>
+			<label kind="guard" x="-501" y="-136">comfort_voilated==1</label>
+			<label kind="assignment" x="-484" y="-110">abnormal_com = 1</label>
+		</transition>
+	</template>
+	<system>// Place template instantiations here.
+// List one or more processes to be composed into a system.
+
+Room1 = Room(0, Rie1, Rea10, Rea12, Rea14, Pr1, Mf1, Ce1, Rih1, Ch1, Aw1,Tforward , massflow[0], Ti[1], Ti[3]);
+Room2 = Room(1, Rie2, Rea20, Rea21, Rea23, Pr2, Mf2, Ce2, Rih2, Ch2, Aw2,Tforward , massflow[1], Ti[0], Ti[2]);
+Room3 = Room(2, Rie3, Rea30, Rea32, Rea34, Pr3, Mf3, Ce3, Rih3, Ch3, Aw3,Tforward , massflow[2], Ti[1], Ti[3]);
+Room4 = Room(3, Rie4, Rea40, Rea41, Rea43, Pr4, Mf4, Ce4, Rih4, Ch4, Aw4,Tforward , massflow[3], Ti[0], Ti[2]);
+
+
+system Room1, Room2, Room3, Room4, Fetch_Data, Optimization, Controller, Attacker, Safety1, Safety2;
+    </system>
+	<queries>
+		<option key="--discretization" value="0.1"/>
+		<query>
+			<formula>E[minute_clock&lt;=((time_offset*60)+(simulation_days*24*60)-1);1](max:D)</formula>
+			<comment>E[hour_clock&lt;=(time_offset+(6));2](max:D)
+
+
+
+
+simulate 1 [hour_clock&lt;=(time_offset+24)]{consumed_power,next_consumed_power,Ti[0],Ti[1],Ti[2],Ti[3], cp_saved}
+simulate 1 [hour_clock&lt;=(time_offset+24)]{consumed_power}
+
+E[hour_clock&lt;=(time_offset+1);2](max:D)
+
+D
+E[hour_clock&lt;=(time_offset+24);2](max:Distance1.Dl+Distance1.Dh)
+E[hour_clock&lt;=(time_offset+24);2](max:Distance2.Dl+Distance2.Dh)
+E[hour_clock&lt;=(time_offset+24);2](max:Distance3.Dl+Distance3.Dh)
+E[hour_clock&lt;=(time_offset+24);2](max:Distance4.Dl+Distance4.Dh)
+E[hour_clock&lt;=(time_offset+24);2](max:Distance1.Dlp+Distance1.Dhp)
+E[hour_clock&lt;=(time_offset+24);2](max:Distance2.Dlp+Distance2.Dhp)
+E[hour_clock&lt;=(time_offset+24);2](max:Distance3.Dlp+Distance3.Dhp)
+E[hour_clock&lt;=(time_offset+24);2](max:Distance4.Dlp+Distance4.Dhp)
+</comment>
+			<result outcome="success" type="quantity" value="≈ 1712.9" timestamp="2025-05-07 13:23:50 +0200">
+				<option key="--discretization" value="0.1"/>
+				<details>≈ 1712.9</details>
+				<plot title="Probability Density Distribution" xaxis="max: D" yaxis="probability density">
+					<series title="density" type="b(0.000000)" color="0x0000ff" encoding="csv">1712.901240154167,4.503599627370496E15
+					</series>
+					<series title="average" type="pl" color="0x00dd00" encoding="csv">1712.901240154167,0.0
+1712.901240154167,4.503599627370496E15
+					</series>
+					<comment>Parameters: α=0.05, ε=0.05, bucket width=2.2204e-16, bucket count=1
+Runs: 1 in total, 1 (100%) displayed, 0 (0%) remaining
+Displayed sample set: { 1712.90124015417 }</comment>
+				</plot>
+				<plot title="Probability Distribution" xaxis="max: D" yaxis="probability">
+					<series title="probability" type="b(0.000000)" color="0x0000ff" encoding="csv">1712.901240154167,1.0
+					</series>
+					<series title="average" type="pl" color="0x00dd00" encoding="csv">1712.901240154167,0.0
+1712.901240154167,1.0
+					</series>
+					<comment>Parameters: α=0.05, ε=0.05, bucket width=2.2204e-16, bucket count=1
+Runs: 1 in total, 1 (100%) displayed, 0 (0%) remaining
+Displayed sample set: { 1712.90124015417 }</comment>
+				</plot>
+				<plot title="Cumulative Probability Distribution" xaxis="max: D" yaxis="probability">
+					<series title="cumulative" type="l" color="0x000000" encoding="csv">1712.901240154167,0.0
+					</series>
+					<series title="average" type="pl" color="0x00dd00" encoding="csv">1712.901240154167,0.0
+1712.901240154167,1.0
+					</series>
+					<comment>Parameters: α=0.05, ε=0.05, bucket width=2.2204e-16, bucket count=1
+Runs: 1 in total, 1 (100%) displayed, 0 (0%) remaining
+Displayed sample set: { 1712.90124015417 }</comment>
+				</plot>
+				<plot title="Cumulative Probability Confidence Intervals" xaxis="max: D" yaxis="probability">
+					<series title="upper limit" type="k" color="0x0000dd" encoding="csv">1712.901240154167,0.975
+					</series>
+					<series title="upper limit" type="k" color="0xdd0000" encoding="csv">1712.901240154167,0.0
+					</series>
+					<series title="cumulative" type="l" color="0x000000" encoding="csv">1712.901240154167,0.0
+					</series>
+					<series title="average" type="pl" color="0x00dd00" encoding="csv">1712.901240154167,0.0
+1712.901240154167,1.0
+					</series>
+					<comment>Parameters: α=0.05, ε=0.05, bucket width=2.2204e-16, bucket count=1
+Runs: 1 in total, 1 (100%) displayed, 0 (0%) remaining
+Displayed sample set: { 1712.90124015417 }</comment>
+				</plot>
+				<plot title="Frequency Histogram" xaxis="max: D" yaxis="count">
+					<series title="count" type="b(0.000000)" color="0x0000ff" encoding="csv">1712.901240154167,1.0
+					</series>
+					<series title="average" type="pl" color="0x00dd00" encoding="csv">1712.901240154167,0.0
+1712.901240154167,1.0
+					</series>
+					<comment>Parameters: α=0.05, ε=0.05, bucket width=2.2204e-16, bucket count=1
+Runs: 1 in total, 1 (100%) displayed, 0 (0%) remaining
+Displayed sample set: { 1712.90124015417 }</comment>
+				</plot>
+			</result>
+		</query>
+		<query>
+			<formula>simulate 1 [minute_clock&lt;=((time_offset*60)+(simulation_days*24*60)-1)]{comfort_voilated, abnormal_com, operation_voilated, abnormal_op}</formula>
+			<comment>E&lt;&gt;(Safety.UnsafeOperation &amp;&amp; global_time &lt;= 3000)</comment>
+		</query>
+	</queries>
+</nta>
