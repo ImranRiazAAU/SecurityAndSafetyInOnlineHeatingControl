@@ -804,7 +804,7 @@ Displayed sample set: { 1712.90124015417 }</comment>
 			</result>
 		</query>
 		<query>
-			<formula>simulate 1 [minute_clock&lt;=((time_offset*60)+(simulation_days*24*60)-1)]{comfort_voilated, abnormal_com, operation_voilated, abnormal_op}</formula>
+			<formula>simulate 10 [minute_clock&lt;=((time_offset*60)+(simulation_days*24*60)-1)]{comfort_voilated, abnormal_com, operation_voilated, abnormal_op}</formula>
 			<comment>E&lt;&gt;(Safety.UnsafeOperation &amp;&amp; global_time &lt;= 3000)</comment>
 		</query>
 	</queries>
